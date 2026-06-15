@@ -1,6 +1,7 @@
 // #include <Arduino.h>
 #include <avr/interrupt.h>
 #include <avr/io.h>
+#include <stdint.h>
 #include <util/delay.h>
 
 /* Forward declarations of datatypes */
@@ -23,7 +24,10 @@ typedef struct {
 
 /* Forward declarations of methods */
 void new_state(
-    State);       // takes in the current state and performs the transition
+    State);  // takes in the current state and performs the transition
+
+void run_motor(uint8_t speed_mode);  // NEED TO MODIFY: runs motor at speed
+                                     // between 0 and 255
 void fan_low();   // NEED TO ADD: turns on motor with a low speed
 void fan_high();  // NEED TO ADD: turns on the motor with a high speed
 void fan_off();   // NEED TO ADD: turns off motor
@@ -57,13 +61,15 @@ void change_state(Event ev) {
 /* Main Program */
 
 int main(void) {
+  cli();  // setup starts here
+
   /* TEMP - Lights to see the program working */
-  DDRB |= (1 << DDB3);  // LED output on Pin 11 for LOW
+  DDRD |= (1 << DDD7);  // LED output on Pin 7 for LOW (to free PWM output)
   DDRB |= (1 << DDB4);  // LED output on Pin 12 for HIGH
   DDRB |= (1 << DDB5);  // LED output on Pin 13 for OFF
 
   // turn LEDs off
-  PORTB &= ~(1 << PB3);
+  PORTD &= ~(1 << PD7);
   PORTB &= ~(1 << PB4);
   PORTB &= ~(1 << PB5);
 
@@ -73,8 +79,6 @@ int main(void) {
   DDRD &= ~(1 << DDD2);  // PD2 - INT0 (Pin 2 - power)
   DDRD &= ~(1 << DDD3);  // PD3 - INT1 (Pin 3 - speed)
 
-  cli();
-
   // enable interrupts on pins 2 and 3
   EIMSK |= (1 << INT0) | (1 << INT1);
 
@@ -82,12 +86,34 @@ int main(void) {
   EICRA |= (1 << ISC00) | (1 << ISC01);  // INT0
   EICRA |= (1 << ISC10) | (1 << ISC11);  // INT1
 
-  sei();
+  /* Timer2 = Motor PWM Control */
+
+  // Setting timer 2 mode to PWM
+  DDRB |= (1 << DDB3);
+
+  TCCR2A |= (1 << WGM21) | (1 << WGM20);
+
+  // Set OC2A at compare match and clear at bottom
+  TCCR2A |= (1 << COM2A1);
+  TCCR2A &= ~(1 << COM2A0);
+  // (non-inverting)
+
+  // 50 % duty cycle: D = OCR1x/(TOP + 1) => OCR1x = D(TOP + 1) = 0.5(255 + 1) =
+  // 128
+  OCR2A = 254;  // OC2A outputs to Pin 11
+
+  // No prescaler
+  TCCR2B |= (1 << CS20);
+
+  // reset the timer
+  TCNT2 = 0;
 
   // initially new state is S0 (entry point of program)
   new_state(S0);
 
   fan_off();
+
+  sei();  // set up ends here
 
   /* Main while loop */
   while (1) {
@@ -109,26 +135,35 @@ ISR(INT0_vect) { change_state(PWR); }
 
 ISR(INT1_vect) { change_state(SPD); }
 
-// temporarily this program shows states with 3 LEDs
+/* Program Output Functions */
+
+void run_motor(uint8_t speed_mode) {
+  // Change the PWM signal going to the motor
+
+  OCR2A = speed_mode % 256;
+}
 
 void fan_low() {
   // Set LED on pin 11 to high and turn off all others
 
   PORTB &= ~(1 << PB4);
   PORTB &= ~(1 << PB5);
-  PORTB |= (1 << PB3);
+  PORTD |= (1 << PD7);
+  run_motor(128);
 }
 
 void fan_high() {
   // Set LED on pin 12 to high and turn off all others
-  PORTB &= ~(1 << PB3);
+  PORTD &= ~(1 << PD7);
   PORTB &= ~(1 << PB5);
   PORTB |= (1 << PB4);
+  run_motor(255);
 }
 
 void fan_off() {
   // Set LED on pin 13 to high and turn off all others
-  PORTB &= ~(1 << PB3);
+  PORTD &= ~(1 << PD7);
   PORTB &= ~(1 << PB4);
   PORTB |= (1 << PB5);
+  run_motor(0);
 }
