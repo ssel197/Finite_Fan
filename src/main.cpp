@@ -62,6 +62,7 @@ int main(void) {
   DDRB |= (1 << DDB4);  // LED output on Pin 12 for HIGH
   DDRB |= (1 << DDB5);  // LED output on Pin 13 for OFF
 
+  // turn LEDs off
   PORTB &= ~(1 << PB3);
   PORTB &= ~(1 << PB4);
   PORTB &= ~(1 << PB5);
@@ -69,35 +70,28 @@ int main(void) {
   /* Button Control */
 
   // Input pins are PD2 and PD3
-  DDRD &= ~(1 << DDD2);  // PD2 (Pin 2 - power)
-  DDRD &= ~(1 << DDD3);  // PD3 (Pin 3 - speed)
+  DDRD &= ~(1 << DDD2);  // PD2 - INT0 (Pin 2 - power)
+  DDRD &= ~(1 << DDD3);  // PD3 - INT1 (Pin 3 - speed)
 
-  // States controlled by polling - TO UPDATE
-  volatile uint8_t pwr_pressed = 0;
-  volatile uint8_t spd_pressed = 0;
+  cli();
+
+  // enable interrupts on pins 2 and 3
+  EIMSK |= (1 << INT0) | (1 << INT1);
+
+  // on rising edge only
+  EICRA |= (1 << ISC00) | (1 << ISC01);  // INT0
+  EICRA |= (1 << ISC10) | (1 << ISC11);  // INT1
+
+  sei();
 
   // initially new state is S0 (entry point of program)
   new_state(S0);
+
   fan_off();
 
   /* Main while loop */
   while (1) {
-    // poll the buttons for their current values
-    if (PIND & (1 << PIND2)) pwr_pressed = 1;
-    if (PIND & (1 << PIND3)) spd_pressed = 1;
-    // avoiding bouncing while polling
-    _delay_ms(400);
-
-    // change states based on the power input
-    if (pwr_pressed) {
-      change_state(PWR);
-      pwr_pressed = 0;
-    }
-
-    if (spd_pressed) {
-      change_state(SPD);
-      spd_pressed = 0;
-    }
+    asm("nop");  // assembly code "No Operation"
   }
 
   return 0;
@@ -105,7 +99,17 @@ int main(void) {
 
 void new_state(State ns) { state = ns; }
 
-// temporarily this outputs to 3 LEDs
+/* Interrupt Handlers */
+
+// INT0 - (Pin 2 - power)
+
+ISR(INT0_vect) { change_state(PWR); }
+
+// INT1 - (Pin 3 - speed)
+
+ISR(INT1_vect) { change_state(SPD); }
+
+// temporarily this program shows states with 3 LEDs
 
 void fan_low() {
   // Set LED on pin 11 to high and turn off all others
