@@ -26,11 +26,13 @@ typedef struct {
 void new_state(
     State);  // takes in the current state and performs the transition
 
-void run_motor(uint8_t speed_mode);  // NEED TO MODIFY: runs motor at speed
-                                     // between 0 and 255
-void fan_low();   // NEED TO ADD: turns on motor with a low speed
-void fan_high();  // NEED TO ADD: turns on the motor with a high speed
-void fan_off();   // NEED TO ADD: turns off motor
+void run_motor(uint8_t speed_mode);  // runs motor at speed (0 to 255)
+void fan_low();                      // turns on motor with a low speed
+void fan_high();                     // turns on the motor with a high speed
+void fan_off();                      // turns off motor
+bool debounce(
+    volatile uint16_t* debounce_counter);  // debounces motor buttons with help
+                                           // of timer overflow
 
 /* Global state management */
 State state;  // creates a new state object (NB: not volatile by default!)
@@ -58,17 +60,23 @@ void change_state(Event ev) {
   }
 }
 
+// Global variables
+// volatile variables for clock ticks that manage debounce values
+#define DEBOUNCE_REFACTORY 200
+
+volatile uint16_t pwr_debounce, spd_debounce = 0;
+
 /* Main Program */
 
 int main(void) {
   cli();  // setup starts here
 
-  /* TEMP - Lights to see the program working */
+  /* DIAGNOSTIC OUTPUT - Lights to see the program working */
   DDRD |= (1 << DDD7);  // LED output on Pin 7 for LOW (to free PWM output)
   DDRB |= (1 << DDB4);  // LED output on Pin 12 for HIGH
   DDRB |= (1 << DDB5);  // LED output on Pin 13 for OFF
 
-  // turn LEDs off
+  // turn LEDs off (for diagnostic mode)
   PORTD &= ~(1 << PD7);
   PORTB &= ~(1 << PB4);
   PORTB &= ~(1 << PB5);
@@ -85,6 +93,18 @@ int main(void) {
   // on rising edge only
   EICRA |= (1 << ISC00) | (1 << ISC01);  // INT0
   EICRA |= (1 << ISC10) | (1 << ISC11);  // INT1
+
+  /* Timer0 = Switch debouncing / general timer based operations */
+
+  // timer overflows should have a resolution that works with a ~1ms period
+  // Prescaler: 64 => overflow period = 2^8 * 64/16MHz = 1.024ms
+  TCCR0B |= (1 << CS01) | (1 << CS00);
+
+  // enable timer overflow interrupt
+  TIMSK0 |= (1 << TOIE0);
+
+  // set initial timer value to 0
+  TCNT0 = 0;
 
   /* Timer2 = Motor PWM Control */
 
@@ -129,11 +149,23 @@ void new_state(State ns) { state = ns; }
 
 // INT0 - (Pin 2 - power)
 
-ISR(INT0_vect) { change_state(PWR); }
+ISR(INT0_vect) {
+  if (debounce(&pwr_debounce)) change_state(PWR);
+}
 
 // INT1 - (Pin 3 - speed)
 
-ISR(INT1_vect) { change_state(SPD); }
+ISR(INT1_vect) {
+  if (debounce(&spd_debounce)) change_state(SPD);
+}
+
+//  TIMER0_OVF_vect (1.024ms timer overflow counter interrupt)
+ISR(TIMER0_OVF_vect) {
+  // only increment these counters if it will not cause overflow and lead
+  // to inaccurate counting (DEBOUNCE_REFACTORY must be less than maximum value)
+  if (pwr_debounce < (DEBOUNCE_REFACTORY + 1)) pwr_debounce += 1;
+  if (spd_debounce < (DEBOUNCE_REFACTORY + 1)) spd_debounce += 1;
+}
 
 /* Program Output Functions */
 
@@ -166,4 +198,15 @@ void fan_off() {
   PORTB &= ~(1 << PB4);
   PORTB |= (1 << PB5);
   run_motor(0);
+}
+
+bool debounce(volatile uint16_t* debounce_counter) {
+  // if the debounce time has been less than ~200 ms return false else begin the
+  // debounce counting
+  if (*debounce_counter < DEBOUNCE_REFACTORY) {
+    return false;
+  }
+
+  *debounce_counter = 0;
+  return true;
 }
