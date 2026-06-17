@@ -66,6 +66,10 @@ void change_state(Event ev) {
 
 volatile uint16_t pwr_debounce, spd_debounce = 0;
 
+// global variable for speed management (default is 1/2 maximum)
+volatile uint8_t medium_speed = 128;
+volatile uint8_t adc_counter = 0;  // used for timing / storing ADC conversions
+
 /* Main Program */
 
 int main(void) {
@@ -128,6 +132,20 @@ int main(void) {
   // reset the timer
   TCNT2 = 0;
 
+  /* ADC - Reads Pin A1 for variable speed using internal V_Ref ~ 5V*/
+
+  // select A1 as output with ref 5V
+  ADMUX |= (1 << MUX0) | (1 << REFS0);
+
+  // set ADC prescaler to maximum (speed is not an issue here)
+  ADCSRA |= (1 << ADPS0) | (1 << ADPS1) | (1 << ADPS2);
+
+  // For only 8 bit output left shift
+  ADMUX |= (1 << ADLAR);
+
+  // Enable ADC and ADC interrupt
+  ADCSRA |= (1 << ADIE) | (1 << ADEN);
+
   // initially new state is S0 (entry point of program)
   new_state(S0);
 
@@ -165,7 +183,17 @@ ISR(TIMER0_OVF_vect) {
   // to inaccurate counting (DEBOUNCE_REFACTORY must be less than maximum value)
   if (pwr_debounce < (DEBOUNCE_REFACTORY + 1)) pwr_debounce += 1;
   if (spd_debounce < (DEBOUNCE_REFACTORY + 1)) spd_debounce += 1;
+
+  // triggering ADC conversion every ~ 10 ms
+  adc_counter++;
+  if (adc_counter > 10) {
+    ADCSRA |= (1 << ADSC);
+    adc_counter = 0;
+  }
 }
+
+// ADC_vect (stores ADC value after ADC conversion complete)
+ISR(ADC_vect) { medium_speed = ADCH; }
 
 /* Program Output Functions */
 
@@ -181,7 +209,7 @@ void fan_low() {
   PORTB &= ~(1 << PB4);
   PORTB &= ~(1 << PB5);
   PORTD |= (1 << PD7);
-  run_motor(128);
+  run_motor(medium_speed);
 }
 
 void fan_high() {
